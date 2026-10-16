@@ -89,6 +89,17 @@ font-family:'Lilita One',sans-serif;font-size:16px;color:#fff;background:rgba(29
 .hubbtn i{width:10px;height:10px;border-left:3px solid #fff;border-bottom:3px solid #fff;transform:rotate(45deg);display:block}
 #hubMini{top:auto;bottom:calc(var(--sb) + 10px);font-size:13px;padding:4px 9px 4px 7px;display:none}
 #hubMini.show{display:flex}
+#tiltWrap{position:absolute;z-index:31;right:calc(var(--sr) + 10px);top:calc(var(--st) + 128px);display:flex;flex-direction:column;align-items:flex-end;gap:6px;max-width:70vw;pointer-events:none}
+#tiltInd{display:flex;align-items:center;gap:6px;background:rgba(29,18,64,.85);border:3px solid #fff;border-radius:14px;padding:4px 8px;font-family:'Lilita One',sans-serif;font-size:13px;opacity:.55}
+#tiltInd.on{opacity:1}
+#tiltInd .tb{width:84px;height:12px;border-radius:6px;background:#fff;position:relative;overflow:hidden}
+#tiltInd .tz{position:absolute;left:43%;right:43%;top:0;bottom:0;background:var(--mint)}
+#tiltInd .tn{position:absolute;top:0;bottom:0;width:6px;margin-left:-3px;left:50%;background:var(--ink);border-radius:3px}
+#tiltInd.hot .tb{background:var(--pink)}
+#tiltInd .tv{min-width:30px;text-align:right}
+#tiltBtn{pointer-events:auto;display:none;font-family:'Lilita One',sans-serif;font-size:14px;color:var(--ink);background:var(--yellow);border:3px solid var(--ink);border-radius:12px;padding:6px 10px;box-shadow:0 4px 0 var(--ink)}
+#tiltHelp{display:none;font-size:12px;line-height:1.25;background:rgba(29,18,64,.92);border:2px solid var(--yellow);border-radius:10px;padding:6px 8px;text-align:right}
+#hubMini{right:auto}
 </style>
 </head>
 <body>
@@ -99,6 +110,8 @@ font-family:'Lilita One',sans-serif;font-size:16px;color:#fff;background:rgba(29
 <div id="turnmsg"><div class="big" id="turnname"></div><p id="turnhint"></p></div>
 <div id="toast"></div>
 <a class="hubbtn" id="hubMini" href="hub.html"><i></i>HUB</a>
+<div id="tiltWrap"><div id="tiltInd"><span class="tl">TILT</span><div class="tb"><div class="tz"></div><div class="tn" id="tiltNeedle"></div></div><span class="tv" id="tiltVal">--</span></div>
+<button id="tiltBtn" type="button">TILT OFF - TAP TO ENABLE</button><div id="tiltHelp"></div></div>
 
 <div class="screen show" id="start">
   <a class="hubbtn" href="hub.html"><i></i>HUB</a>
@@ -153,21 +166,40 @@ document.addEventListener('touchmove',e=>{if(e.target.tagName!=='INPUT')e.preven
 let lastTouch=0;document.addEventListener('touchend',e=>{const n=Date.now();if(n-lastTouch<300&&e.target.tagName!=='INPUT'&&e.target.tagName!=='BUTTON')e.preventDefault();lastTouch=n},{passive:false});
 
 // ---------- Tilt ----------
-let tiltOK=false,gamma=0,gammaS=0,gotOrientation=false;
-function onOrient(e){if(e.gamma==null)return;gotOrientation=true;gamma=e.gamma;}
-async function requestTilt(){
-  try{
-    if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){
-      const r=await DeviceOrientationEvent.requestPermission();
-      if(r!=='granted')return false;
-      try{if(typeof DeviceMotionEvent!=='undefined'&&DeviceMotionEvent.requestPermission)await DeviceMotionEvent.requestPermission();}catch(_){}
-    }
-    if(typeof DeviceOrientationEvent==='undefined')return false;
-    addEventListener('deviceorientation',onOrient);
-    return true;
-  }catch(err){return false;}
+let tiltOK=false,tiltState='off',gamma=0,gammaS=0,gotOrientation=false,lastOrientT=0,noEvtTimer=0;
+function screenAngle(){const o=screen.orientation;if(o&&typeof o.angle==='number')return o.angle;return typeof window.orientation==='number'?window.orientation:0;}
+function onOrient(e){if(e.gamma==null&&e.beta==null)return;
+  const a=((screenAngle()%360)+360)%360;let v=e.gamma||0;
+  if(a===90)v=-(e.beta||0);else if(a===270)v=(e.beta||0);else if(a===180)v=-(e.gamma||0);
+  // past ~90deg gamma flips; clamp
+  gamma=Math.max(-80,Math.min(80,v));
+  if(!gotOrientation){gotOrientation=true;tiltUI();}lastOrientT=performance.now();}
+function attachTilt(){removeEventListener('deviceorientation',onOrient);addEventListener('deviceorientation',onOrient);tiltOK=true;tiltState='waiting';
+  clearTimeout(noEvtTimer);noEvtTimer=setTimeout(()=>{if(!gotOrientation){tiltState='noevents';tiltUI();}},1500);tiltUI();}
+// MUST be called synchronously inside a tap handler: requestPermission is the first thing invoked (no await before it).
+function requestTilt(){
+  if(typeof DeviceOrientationEvent==='undefined'){tiltState='unavailable';tiltUI();return Promise.resolve(false);}
+  if(typeof DeviceOrientationEvent.requestPermission==='function'){
+    let pr;try{pr=DeviceOrientationEvent.requestPermission();}catch(err){tiltState='denied';tiltUI();return Promise.resolve(false);}
+    return pr.then(r=>{if(r==='granted'){attachTilt();return true;}tiltState='denied';tiltUI();return false;})
+             .catch(()=>{tiltState='denied';tiltUI();return false;});
+  }
+  attachTilt();return Promise.resolve(true);
+}
+function tiltUI(){
+  const b=$('tiltBtn'),h=$('tiltHelp');if(!b)return;
+  const on=tiltActive();
+  if(on)tiltState='on';
+  b.style.display=on||tiltState==='waiting'?'none':'flex';
+  b.textContent=tiltState==='unavailable'?'TILT UNAVAILABLE - USE DRAG':'TILT OFF - TAP TO ENABLE';
+  h.style.display=tiltState==='noevents'||tiltState==='denied'?'block':'none';
+  h.textContent=tiltState==='denied'?'Motion access was denied. Tap the button to retry; if no prompt appears, close and reopen this page.':
+    'No motion data yet. On iPhone check Settings > Safari > Motion & Orientation Access is on, then reload.';
+  $('tiltInd').classList.toggle('on',on);
 }
 function tiltActive(){return tiltOK&&gotOrientation;}
+const TILT_STRENGTH=0.6,DEADZONE=3;
+function tiltG(){if(!tiltActive())return 0;const a=Math.abs(gammaS);if(a<DEADZONE)return 0;return Math.sign(gammaS)*Math.min(1,(a-DEADZONE)/42);}
 
 // ---------- Audio (tiny synth) ----------
 let actx=null;
@@ -181,7 +213,7 @@ let players=[],cur=0,nPlayers=2,best=+(localStorage.getItem('ps_best')||0);
 let phase='menu'; // aim, fall, settle, pass, over
 let engine=null,world=null,platform=null,blocks=[],active=null;
 let camY=0,camTarget=0,towerTop=0,phaseT=0,stillT=0,targetX=0,dragging=false,downX=0,downY=0,downT=0,shake=0;
-let particles=[],nextShape=null,hint='';
+let particles=[],nextShape=null,hint='',penalized=false;
 const PLAT_W=230,PLAT_Y=0;
 
 function namesUI(){
@@ -194,9 +226,11 @@ $('seg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)r
   [...$('seg').children].forEach(c=>c.classList.toggle('on',c===b));namesUI();beep(600);});
 function show(id){['start','setup','pass','over'].forEach(s=>$(s).classList.toggle('show',s===id));}
 
+$('tiltBtn').addEventListener('click',e=>{e.stopPropagation();gotOrientation=false;requestTilt();});
 $('hubMini').addEventListener('click',e=>{if(!confirm('Leave this game and go back to the hub?'))e.preventDefault();});
-$('playBtn').addEventListener('click',async()=>{
-  beep(520,.1);tiltOK=await requestTilt();
+$('playBtn').addEventListener('click',()=>{
+  const pr=requestTilt();beep(520,.1);
+  pr.then(()=>{$('ctrlNote').textContent=tiltOK?'Tilt controls ON: tilt to steer, tap to drop.':'Touch controls: drag to aim, release to drop.';});
   setTimeout(()=>{$('ctrlNote').textContent=tiltActive()?'Tilt controls ON: tilt to steer, tap to drop.':'Touch controls: drag to aim, release to drop.';},400);
   $('ctrlNote').textContent=tiltOK?'Tilt controls ON: tilt to steer, tap to drop.':'Touch controls: drag to aim, release to drop.';
   namesUI();show('setup');
@@ -216,7 +250,7 @@ function makeWorld(){
   if(engine){Matter.World.clear(engine.world,false);Matter.Engine.clear(engine);}
   engine=Matter.Engine.create({enableSleeping:false});engine.positionIterations=10;engine.velocityIterations=8;world=engine.world;
   engine.gravity.y=1;engine.gravity.x=0;
-  platform=Matter.Bodies.rectangle(0,PLAT_Y+15,PLAT_W,30,{isStatic:true,friction:1,chamfer:{radius:8},label:'plat'});
+  platform=Matter.Bodies.rectangle(0,PLAT_Y+15,PLAT_W,30,{isStatic:true,friction:.6,chamfer:{radius:8},label:'plat'});
   Matter.World.add(world,platform);blocks=[];active=null;particles=[];
 }
 function randShape(){
@@ -232,14 +266,14 @@ function randShape(){
   return{k:'circ',r:22*s,c};
 }
 function makeBody(sh,x,y){
-  const o={friction:.9,frictionStatic:1.2,restitution:.02,density:.0018,chamfer:{radius:5}};
+  const o={friction:.45,frictionStatic:.6,restitution:.02,density:.0018,chamfer:{radius:5}};
   let b;
   if(sh.k==='rect')b=Matter.Bodies.rectangle(x,y,sh.w,sh.h,o);
   else if(sh.k==='poly')b=Matter.Bodies.polygon(x,y,sh.n,sh.r,o);
   else if(sh.k==='trap')b=Matter.Bodies.trapezoid(x,y,sh.w,sh.h,sh.sl,o);
-  else if(sh.k==='circ')b=Matter.Bodies.circle(x,y,sh.r,{friction:1,frictionStatic:2,density:.0018,restitution:0});
+  else if(sh.k==='circ')b=Matter.Bodies.circle(x,y,sh.r,{friction:.6,frictionStatic:.8,density:.0018,restitution:0});
   else{const s=sh.s;const a=Matter.Bodies.rectangle(x,y,s*3,s,{chamfer:{radius:4}}),bb=Matter.Bodies.rectangle(x-s,y-s,s,s,{chamfer:{radius:4}});
-    b=Matter.Body.create({parts:[a,bb],friction:.9,frictionStatic:1.2,restitution:.02});Matter.Body.setDensity(b,.0018);}
+    b=Matter.Body.create({parts:[a,bb],friction:.45,frictionStatic:.6,restitution:.02});Matter.Body.setDensity(b,.0018);}
   if(sh.k==='poly'&&sh.n===3)Matter.Body.setAngle(b,-Math.PI/2);
   b.color=sh.c;b.owner=cur;return b;
 }
@@ -253,7 +287,7 @@ function startGame(){
 }
 function spawnY(){return Math.min(towerTop,PLAT_Y)-Math.max(170,H*0.32);}
 function beginTurn(){
-  phase='aim';phaseT=0;engine.gravity.x=0;
+  phase='aim';phaseT=0;penalized=false;
   const sh=nextShape;nextShape=randShape();
   active=makeBody(sh,0,spawnY());Matter.Body.setStatic(active,true);active.shape=sh;Matter.World.add(world,active);
   targetX=0;updateHUD();
@@ -295,7 +329,7 @@ function endTurnSuccess(){
   if(h>best){best=h;localStorage.setItem('ps_best',best.toFixed(1));}
   toast('+'+pts,'#3ee0a1');active=null;
   if(aliveCount()<=1)return gameOver();
-  phase='pass';phaseT=0;updateHUD();$('turnmsg').classList.remove('show');
+  phase='pass';phaseT=0;penalized=false;updateHUD();$('turnmsg').classList.remove('show');
   const nx=nextAlive(cur);$('passName').textContent=players[nx].name;$('passName').style.color=players[nx].color;
   $('passHint').textContent=tiltActive()?'Hand it over gently! Tilting pushes the tower.':'Hand it over! (Tilt drift is off without motion access.)';
   show('pass');
@@ -303,12 +337,13 @@ function endTurnSuccess(){
 function afterFail(){
   active=null;towerTop=computeTop();
   if(aliveCount()<=1)return gameOver();
-  phase='pass';phaseT=0;engine.gravity.x=0;$('turnmsg').classList.remove('show');
+  phase='pass';phaseT=0;$('turnmsg').classList.remove('show');
   const nx=nextAlive(cur);$('passName').textContent=players[nx].name;$('passName').style.color=players[nx].color;
   $('passHint').textContent=tiltActive()?'Hand it over gently! Tilting pushes the tower.':'Hand it over carefully!';
   setTimeout(()=>{if(phase==='pass')show('pass');},700);
+  setTimeout(()=>{if(phase==='pass')penalized=false;},1500);
 }
-function nextTurn(){show(null);engine.gravity.x=0;cur=nextAlive(cur);
+function nextTurn(){show(null);cur=nextAlive(cur);
   for(const b of blocks)Matter.Body.setVelocity(b,{x:b.velocity.x*.3,y:b.velocity.y*.3});beginTurn();}
 function gameOver(){
   phase='over';engine.gravity.x=0;$('turnmsg').classList.remove('show');updateHUD();
@@ -335,8 +370,14 @@ addEventListener('keyup',e=>{if(e.key==='ArrowLeft'||e.key==='ArrowRight')keyDir
 const STEP=1000/60;let acc=0,last=performance.now();
 function step(dt){
   gammaS+=(gamma-gammaS)*.25;
+  if(tiltActive()&&performance.now()-lastOrientT>3000&&tiltState==='on'){} 
+  const ind=$('tiltNeedle');if(ind){ind.style.left=(50+Math.max(-48,Math.min(48,gammaS/45*48)))+'%';$('tiltVal').textContent=tiltActive()?(gammaS>=0?'+':'')+Math.round(gammaS)+'°':'--';
+    $('tiltInd').classList.toggle('hot',Math.abs(tiltG())>.45);}
   if(!engine||phase==='menu')return;
   phaseT+=dt;
+  // tilt gravity applies whenever the tower exists (aim, fall, settle, pass)
+  const gx=phase==='over'?0:tiltG()*TILT_STRENGTH;
+  if(Math.abs(gx-engine.gravity.x)>0.002){engine.gravity.x=gx;for(const b of blocks)if(b.isSleeping)Matter.Sleeping.set(b,false);}
   const lim=Math.min(W/2-30,PLAT_W*0.95);
   if(keyDir)targetX=Math.max(-lim,Math.min(lim,targetX+keyDir*5));
   if(tiltActive()&&!dragging&&(phase==='aim'||phase==='fall'))targetX=Math.max(-lim,Math.min(lim,gammaS*6));
@@ -352,18 +393,23 @@ function step(dt){
   }
   if(phase==='pass'){
     // gentle drift from tilt
-    const g=tiltActive()?Math.max(-1,Math.min(1,gammaS/45)):0;engine.gravity.x=g*0.22;
+    const g=tiltG();
     const nd=$('needle');nd.style.left=(50+Math.max(-48,Math.min(48,g*50)))+'%';
     $('meter').style.background=Math.abs(g)>.4?'#ff4f8b':'#fff';
   }
   Matter.Engine.update(engine,STEP);
   // fallen detection
-  if(phase==='fall'||phase==='settle'||phase==='pass'){
+  if(phase==='aim'||phase==='fall'||phase==='settle'||phase==='pass'){
     const f=checkFallen();
-    if(f.length){const who=cur;const wasActive=f.includes(active);loseLife(who,f);
-      if(phase==='pass'){show(null);engine.gravity.x=0;if(aliveCount()<=1)return gameOver();setTimeout(()=>{if(phase==='pass')show('pass')},800);
+    if(f.length){const wasActive=f.includes(active);
+      if(penalized){ // one life max per turn / per hand-off; clear extra debris quietly
+        f.forEach(b=>{burst(b.position.x,Math.min(b.position.y,PLAT_Y+60),b.color,6);Matter.World.remove(world,b);});blocks=blocks.filter(b=>!f.includes(b));
+      }else{penalized=true;loseLife(cur,f);}
+      towerTop=computeTop();
+      if(phase==='pass'){if(aliveCount()<=1){show(null);return gameOver();}
         $('passName').textContent=players[nextAlive(cur)].name;}
-      else{if(wasActive||phase==='settle'){if(active)Matter.World.remove(world,active);blocks=blocks.filter(b=>b!==active);afterFail();}}
+      else if(phase==='aim'){if(players[cur].out){Matter.World.remove(world,active);active=null;afterFail();}}
+      else if(wasActive||phase==='settle'){if(active)Matter.World.remove(world,active);blocks=blocks.filter(b=>b!==active);afterFail();}
       return;}
   }
   if(phase==='settle'){
@@ -460,8 +506,10 @@ function draw(now){
 function roundRect(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
 setInterval(()=>{if(engine&&phase!=='menu')$('height').textContent=heightM().toFixed(1)},250);
 document.addEventListener('visibilitychange',()=>{last=performance.now();acc=0;});
-window.__ps={get phase(){return phase},get players(){return players},get cur(){return cur},drop,get blocks(){return blocks}};
+window.__ps={get gx(){return engine?engine.gravity.x:0},get tilt(){return tiltActive()},get phase(){return phase},get players(){return players},get cur(){return cur},drop,get blocks(){return blocks}};
 requestAnimationFrame(frame);
+// show tilt state after first frame (button only after user has tapped Play)
+setTimeout(()=>{if(typeof DeviceOrientationEvent==='undefined')tiltState='unavailable';},0);
 })();
 </script>
 </body>

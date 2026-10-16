@@ -1,4 +1,4 @@
 {
-  "version": "2026101601",
-  "update": "New game: Pressure Stack (slot 3) — tilt to steer falling blocks, stack the tower, and pass the phone carefully. 2–4 players, 3 lives each."
+  "version": "2026101602",
+  "update": "Pressure Stack: tilt now pushes the tower at all times (aiming, falling and hand-off), with a live tilt meter and a Tilt Off - tap to enable button. One life max lost per turn."
 }
